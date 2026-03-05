@@ -1,0 +1,126 @@
+@import "tailwindcss";
+
+:root {
+  --bg-primary: #0a0e1a;
+  --bg-secondary: #0f1526;
+  --bg-card: #131929;
+  --bg-surface: #1a2238;
+  --border: #1e2d4a;
+  --border-bright: #2a3f6a;
+  --text-primary: #e2e8f8;
+  --text-secondary: #8899bb;
+  --text-muted: #4a5a7a;
+  --accent-green: #00e676;
+  --accent-red: #ff3d57;
+  --accent-blue: #3b7bff;
+  --accent-yellow: #ffd740;
+  --accent-orange: #ff9800;
+  --ce-color: #3b7bff;
+  --pe-color: #ff3d57;
+}
+
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  background-color: var(--bg-primary);
+  color: var(--text-primary);
+  font-family: 'Inter', system-ui, -apple-system, sans-serif;
+  min-height: 100vh;
+}
+
+/* Scrollbar */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: var(--bg-primary);
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--border-bright);
+  border-radius: 3px;
+}
+
+/* Grid cell input */
+.grid-input {
+  background: var(--bg-primary);
+  border: 1px solid var(--border);
+  color: var(--text-primary);
+  border-radius: 4px;
+  padding: 4px 6px;
+  width: 100%;
+  font-size: 11px;
+  text-align: center;
+  transition: border-color 0.2s;
+  outline: none;
+}
+
+.grid-input:focus {
+  border-color: var(--accent-blue);
+  box-shadow: 0 0 0 2px rgba(59, 123, 255, 0.15);
+}
+
+/* Pulse animation for live prices */
+@keyframes pulse-price {
+  0% {
+    opacity: 1;
+  }
+
+  50% {
+    opacity: 0.6;
+  }
+
+  100% {
+    opacity: 1;
+  }
+}
+
+.price-update {
+  animation: pulse-price 0.4s ease;
+}
+
+/* Status badges */
+.status-idle {
+  color: var(--text-muted);
+}
+
+.status-running {
+  color: var(--accent-blue);
+}
+
+.status-intrade {
+  color: var(--accent-yellow);
+}
+
+.status-target {
+  color: var(--accent-green);
+}
+
+.status-sl {
+  color: var(--accent-red);
+}
+
+.status-error {
+  color: var(--accent-orange);
+}
+
+/* Glowing dots */
+.dot-green {
+  background: var(--accent-green);
+  box-shadow: 0 0 6px var(--accent-green);
+}
+
+.dot-red {
+  background: var(--accent-red);
+  box-shadow: 0 0 6px var(--accent-red);
+}
+
+.dot-grey {
+  background: var(--text-muted);
+}
