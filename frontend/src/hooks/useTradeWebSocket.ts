@@ -73,7 +73,7 @@ type Options = {
 const RECONNECT_MS = 3000;
 
 export function useTradeWebSocket({
-    url = "ws://localhost:8000/ws",
+    url,
     onUpdate,
     onLtpCacheUpdate,
     onTradesUpdate,
@@ -83,6 +83,11 @@ export function useTradeWebSocket({
     onClose,
     onError,
 }: Options) {
+    // Dynamically build the WS URL if one isn't provided
+    const wsUrl = url ?? (() => {
+        const apiBase = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+        return apiBase.replace(/^http/, "ws") + "/ws";
+    })();
     const wsRef = useRef<WebSocket | null>(null);
     const reconnectRef = useRef<ReturnType<typeof setTimeout> | null>(null);
     const mountedRef = useRef(true);
@@ -91,7 +96,7 @@ export function useTradeWebSocket({
         if (!mountedRef.current) return;
 
         try {
-            const ws = new WebSocket(url);
+            const ws = new WebSocket(wsUrl);
             wsRef.current = ws;
 
             ws.onopen = () => {
