@@ -1,0 +1,51 @@
+services:
+  # ── FastAPI Backend ────────────────────────────────────────────────────────
+  - type: web
+    name: autotrade-backend
+    runtime: python
+    region: singapore        # closest to India; change to oregon/ohio if preferred
+    plan: free
+    rootDir: backend
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /api/status
+    envVars:
+      - key: ENV
+        value: production
+      - key: ALICEBLUE_USER_ID
+        sync: false          # set manually in Render dashboard
+      - key: ALICEBLUE_API_KEY
+        sync: false
+      - key: ZERODHA_API_KEY
+        sync: false
+      - key: ZERODHA_API_SECRET
+        sync: false
+      - key: ZERODHA_CLIENT_ID
+        sync: false
+      - key: TELEGRAM_BOT_TOKEN
+        sync: false
+      - key: TELEGRAM_CHAT_ID
+        sync: false
+      - key: DATABASE_URL
+        value: sqlite+aiosqlite:///./autotrade.db
+
+  # ── Next.js Frontend ───────────────────────────────────────────────────────
+  - type: web
+    name: autotrade-frontend
+    runtime: node
+    region: singapore
+    plan: free
+    rootDir: frontend
+    buildCommand: npm install && npm run build
+    startCommand: npm run start
+    envVars:
+      - key: NEXT_PUBLIC_API_URL
+        fromService:
+          name: autotrade-backend
+          type: web
+          property: host
+          # Render automatically sets this to https://autotrade-backend.onrender.com
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: 3000
