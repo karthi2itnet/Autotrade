@@ -64,7 +64,11 @@ async def lifespan(app: FastAPI):
 app = FastAPI(title="Autotrade API", version="1.0.0", lifespan=lifespan)
 
 app.add_middleware(CORSMiddleware,
-    allow_origins=["http://localhost:3000"],
+    allow_origins=[
+        "http://localhost:3000",
+        "https://autotrade-frontend.onrender.com",
+        "https://autotrade-frontend-xgq8.onrender.com"
+    ],
     allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
 
 # ── Request/Response models ────────────────────────────────────────────────────
