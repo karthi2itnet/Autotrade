@@ -123,6 +123,14 @@ async def broker_connect(req: BrokerConnectRequest):
     except Exception as e:
         raise HTTPException(500, str(e))
 
+@app.get("/")
+async def root():
+    return {"status": "Autotrade Backend is running"}
+
+@app.get("/api/status")
+async def health_status():
+    return {"status": "ok"}
+    
 @app.get("/api/broker/status")
 async def broker_status():
     from app.brokers import aliceblue, zerodha
