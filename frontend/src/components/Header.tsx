@@ -132,6 +132,7 @@ export default function Header() {
                     <nav style={{ display: "flex", gap: 4 }}>
                         {navLink("/", "Dashboard")}
                         {navLink("/broker", "Broker Connect")}
+                        {navLink("/chart", "Nifty Chart")}
 
                         {/* Toolbar toggle */}
                         <button

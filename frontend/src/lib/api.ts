@@ -66,11 +66,24 @@ export const api = {
     killAll: () =>
         fetch(`${API_BASE}/api/bot/kill-all`, { method: "POST" }).then(r => r.json()),
 
+    getGlobalSettings: () =>
+        fetch(`${API_BASE}/api/global-settings`).then(r => r.json()),
+
+    setGlobalSettings: (payload: object) =>
+        fetch(`${API_BASE}/api/global-settings`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(payload),
+        }).then(r => r.json()),
+
     // Trades & Orders
     getTodayTrades: () =>
         fetch(`${API_BASE}/api/trades/today`).then(r => r.json()),
 
     getTodayOrders: () =>
         fetch(`${API_BASE}/api/orders/today`).then(r => r.json()),
+
+    getNiftyChart: () =>
+        fetch(`${API_BASE}/api/chart/nifty`).then(r => r.json()),
 };
 

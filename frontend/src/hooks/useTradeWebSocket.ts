@@ -9,6 +9,7 @@ export type WsRowState = {
     lots_closed_today: number;
     total_points_today: number;
     total_pnl_today: number;
+    reentry_count: number;
     open_lots: {
         lot_number: number;
         entry_ltp: number;
@@ -49,9 +50,16 @@ export type WsBrokerOrder = {
     type: "order";
 };
 
+export type WsGlobalSettings = {
+    max_profit_limit: number;
+    max_loss_limit: number;
+    global_trading_halted: boolean;
+};
+
 type WsMessage = {
     type: "state_update";
     rows: Record<string, WsRowState>;
+    global_settings?: WsGlobalSettings;
     ltp_cache?: Record<string, number>;
     broker_trades?: WsBrokerTrade[];
     broker_orders?: WsBrokerOrder[];
@@ -61,6 +69,7 @@ type WsMessage = {
 type Options = {
     url?: string;
     onUpdate: (rows: Record<string, WsRowState>) => void;
+    onGlobalSettingsUpdate?: (settings: WsGlobalSettings) => void;
     onLtpCacheUpdate?: (cache: Record<string, number>) => void;
     onTradesUpdate?: (trades: WsBrokerTrade[]) => void;
     onOrdersUpdate?: (orders: WsBrokerOrder[]) => void;
@@ -75,6 +84,7 @@ const RECONNECT_MS = 3000;
 export function useTradeWebSocket({
     url,
     onUpdate,
+    onGlobalSettingsUpdate,
     onLtpCacheUpdate,
     onTradesUpdate,
     onOrdersUpdate,
@@ -109,6 +119,9 @@ export function useTradeWebSocket({
                     const msg: WsMessage = JSON.parse(evt.data);
                     if (msg.type === "state_update") {
                         onUpdate(msg.rows);
+                        if (msg.global_settings && onGlobalSettingsUpdate) {
+                            onGlobalSettingsUpdate(msg.global_settings);
+                        }
                         if (msg.ltp_cache && onLtpCacheUpdate) {
                             onLtpCacheUpdate(msg.ltp_cache);
                         }
@@ -146,7 +159,7 @@ export function useTradeWebSocket({
                 reconnectRef.current = setTimeout(connect, RECONNECT_MS);
             }
         }
-    }, [url, onUpdate, onLtpCacheUpdate, onTradesUpdate, onOrdersUpdate, onIndicesUpdate, onOpen, onClose, onError]);
+    }, [url, onUpdate, onGlobalSettingsUpdate, onLtpCacheUpdate, onTradesUpdate, onOrdersUpdate, onIndicesUpdate, onOpen, onClose, onError]);
 
     useEffect(() => {
         mountedRef.current = true;
@@ -166,3 +179,4 @@ export function useTradeWebSocket({
 
     return { send };
 }
+

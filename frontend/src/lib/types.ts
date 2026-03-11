@@ -34,6 +34,7 @@ export interface GridRowConfig {
     maxReentries: number;
     hedge: boolean;
     hedgeSymbol: string;   // opposite-side symbol if hedge is enabled
+    autoSell: boolean;     // place limit sell order automatically after buy
     status: BotStatus;
     tradesCount: number;
     reentryCount: number;

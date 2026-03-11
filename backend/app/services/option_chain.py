@@ -10,9 +10,11 @@ from app.config import settings
 logger = logging.getLogger(__name__)
 
 STRIKE_INTERVALS = {
-    "NIFTY":     50,
-    "BANKNIFTY": 100,
-    "FINNIFTY":  50,
+    "NIFTY":      50,
+    "BANKNIFTY":  100,
+    "FINNIFTY":   50,
+    "MIDCPNIFTY": 25,
+    "SENSEX":     100,
 }
 
 @dataclass
@@ -63,11 +65,6 @@ def resolve_expiry(expiry_type: str, underlying: str = "") -> str:
     if expiry_type.upper() not in ("WEEKLY", "MONTHLY"):
         return expiry_type  # Assume it's already a formatted string
 
-    # --- TEMP OVERRIDE for Tuesday March 10th 2026 holiday expiry
-    if underlying.upper() == "NIFTY" and expiry_type == "weekly":
-        return "10MAR26"
-    # -------------------------------------------------------------------
-
     today = date.today()
 
     if expiry_type == "weekly":
@@ -106,14 +103,16 @@ async def get_strike_set(underlying: str, expiry: str, broker: str) -> StrikeSet
     Fetch spot price and compute OTM1, ATM, ITM1 strikes.
     broker: 'aliceblue' | 'zerodha'
     """
-    interval = STRIKE_INTERVALS.get(underlying, 50)
+    u_upper = underlying.upper()
+    interval = STRIKE_INTERVALS.get(u_upper, 50)
+    if interval <= 0: interval = 50
 
     # Resolve 'weekly' / 'monthly' → concrete date string like '04MAR25'
-    expiry = resolve_expiry(expiry, underlying)
-    logger.info("Resolved expiry for %s: %s", underlying, expiry)
+    expiry = resolve_expiry(expiry, u_upper)
+    logger.info("Resolved expiry for %s: %s (interval=%d)", u_upper, expiry, interval)
 
     # Get spot price from index feed
-    spot = await _get_spot_price(underlying, broker)
+    spot = await _get_spot_price(u_upper, broker)
     atm = calc_atm(spot, interval)
 
     # CE: OTM is higher strike, ITM is lower strike
@@ -146,10 +145,17 @@ async def get_strike_set(underlying: str, expiry: str, broker: str) -> StrikeSet
 
 async def _get_spot_price(underlying: str, broker: str) -> float:
     """Get current spot price of the index."""
-    EXCHANGE_MAP = {"NIFTY": "NSE:NIFTY 50", "BANKNIFTY": "NSE:NIFTY BANK", "FINNIFTY": "NSE:NIFTY FIN SERVICE"}
+    u_upper = underlying.upper()
+    EXCHANGE_MAP = {
+        "NIFTY": "NSE:NIFTY 50",
+        "BANKNIFTY": "NSE:NIFTY BANK",
+        "FINNIFTY": "NSE:NIFTY FIN SERVICE",
+        "MIDCPNIFTY": "NSE:NIFTY MID SELECT",
+        "SENSEX": "BSE:SENSEX"
+    }
     if broker == "zerodha":
         from app.brokers import zerodha
-        symbol = EXCHANGE_MAP.get(underlying, f"NSE:{underlying}")
+        symbol = EXCHANGE_MAP.get(u_upper, f"NSE:{u_upper}")
         return await zerodha.get_ltp(*symbol.split(":"))
     else:
         from app.brokers import aliceblue

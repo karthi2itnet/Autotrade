@@ -3,7 +3,7 @@ import { TrendingUp, TrendingDown, BarChart2, Target, AlertTriangle, Activity } 
 import { useDashboard } from "@/context/DashboardContext";
 
 export default function PnlBar() {
-    const { liveData } = useDashboard();
+    const { liveData, globalSettings } = useDashboard();
 
     // Aggregate across all live rows
     let totalPnl = 0;
@@ -67,33 +67,51 @@ export default function PnlBar() {
     ];
 
     return (
-        <div style={{
-            display: "grid",
-            gridTemplateColumns: "repeat(6, 1fr)",
-            gap: 12,
-            marginBottom: 20,
-        }}>
-            {stats.map(({ label, value, color, icon: Icon }) => (
-                <div key={label} style={{
-                    background: "var(--bg-card)",
-                    border: "1px solid var(--border)",
+        <div style={{ marginBottom: 20 }}>
+            {globalSettings?.global_trading_halted && (
+                <div style={{
+                    background: "rgba(255, 61, 87, 0.15)",
+                    border: "1px solid var(--accent-red)",
+                    color: "var(--accent-red)",
+                    padding: "12px 20px",
                     borderRadius: 12,
-                    padding: "14px 16px",
+                    marginBottom: 16,
+                    fontWeight: 600,
                     display: "flex",
-                    flexDirection: "column",
-                    gap: 6,
+                    alignItems: "center",
+                    gap: 10,
                 }}>
-                    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-                        <span style={{ fontSize: 11, color: "var(--text-muted)", fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.5px" }}>
-                            {label}
-                        </span>
-                        <Icon size={13} color={color} />
-                    </div>
-                    <span style={{ fontSize: 20, fontWeight: 700, color, fontVariantNumeric: "tabular-nums" }}>
-                        {value}
-                    </span>
+                    <AlertTriangle size={18} />
+                    SYSTEM HALTED: Global Profit/Loss Limit Reached.
                 </div>
-            ))}
+            )}
+            <div style={{
+                display: "grid",
+                gridTemplateColumns: "repeat(6, 1fr)",
+                gap: 12,
+            }}>
+                {stats.map(({ label, value, color, icon: Icon }) => (
+                    <div key={label} style={{
+                        background: "var(--bg-card)",
+                        border: "1px solid var(--border)",
+                        borderRadius: 12,
+                        padding: "14px 16px",
+                        display: "flex",
+                        flexDirection: "column",
+                        gap: 6,
+                    }}>
+                        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                            <span style={{ fontSize: 11, color: "var(--text-muted)", fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.5px" }}>
+                                {label}
+                            </span>
+                            <Icon size={13} color={color} />
+                        </div>
+                        <span style={{ fontSize: 20, fontWeight: 700, color, fontVariantNumeric: "tabular-nums" }}>
+                            {value}
+                        </span>
+                    </div>
+                ))}
+            </div>
         </div>
     );
 }

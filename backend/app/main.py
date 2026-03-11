@@ -57,8 +57,12 @@ async def lifespan(app: FastAPI):
     # Fast loop: poll NIFTY/BANKNIFTY/SENSEX/VIX every 250 ms
     asyncio.create_task(_index_poller_loop())
     # Slow loop: refresh broker trade book every 5 s
+    # Start background polling tasks
+    from app.services.signals import signal_engine
+    await signal_engine.start()
     asyncio.create_task(_broker_trades_loop())
     yield
+    await signal_engine.stop()
     await bot_engine.stop_all()
 
 app = FastAPI(title="Autotrade API", version="1.0.0", lifespan=lifespan)
@@ -95,11 +99,17 @@ class BotRowRequest(BaseModel):
     hedge_symbol: str = ""
     broker: str = "aliceblue"
     paper_mode: bool = True
+    auto_sell: bool = False
 
 class StrikeRequest(BaseModel):
     underlying: str
     expiry: str
     broker: str
+
+class GlobalSettings(BaseModel):
+    max_profit_limit: float
+    max_loss_limit: float
+    global_trading_halted: bool
 
 # ── Broker endpoints ───────────────────────────────────────────────────────────
 
@@ -131,6 +141,21 @@ async def root():
 async def health_status():
     return {"status": "ok"}
     
+@app.get("/api/global-settings")
+async def get_global_settings():
+    return {
+        "max_profit_limit": bot_engine.max_profit_limit,
+        "max_loss_limit": bot_engine.max_loss_limit,
+        "global_trading_halted": bot_engine.global_trading_halted,
+    }
+
+@app.post("/api/global-settings")
+async def set_global_settings(settings: GlobalSettings):
+    bot_engine.max_profit_limit = settings.max_profit_limit
+    bot_engine.max_loss_limit = settings.max_loss_limit
+    bot_engine.global_trading_halted = settings.global_trading_halted
+    return {"status": "updated"}
+
 @app.get("/api/broker/status")
 async def broker_status():
     from app.brokers import aliceblue, zerodha
@@ -353,9 +378,14 @@ async def stop_bot(row_id: str):
     return {"status": "stopped", "row_id": row_id}
 
 @app.post("/api/bot/stop-all")
-async def stop_all():
+async def stop_all_bots():
     await bot_engine.stop_all()
-    return {"status": "all_stopped"}
+    return {"message": "All bots stopped"}
+
+@app.get("/api/chart/nifty")
+async def get_nifty_chart():
+    from app.services.signals import signal_engine
+    return signal_engine.get_chart_data()
 
 @app.post("/api/bot/kill-all")
 async def kill_all():
@@ -379,6 +409,7 @@ def _serialize_state(s) -> dict:
         "lots_closed_today":  s.lots_closed_today,
         "total_points_today": s.total_points_today,
         "total_pnl_today":    s.total_pnl_today,
+        "reentry_count":      s.current_reentries,
         "open_lots": [
             {
                 "lot_number": lot.lot_number,
@@ -576,7 +607,7 @@ async def _ltp_poller_loop():
                 await aliceblue.bulk_poll_ltps()
         except Exception as e:
             logger.debug("LTP poller error: %s", e)
-        await asyncio.sleep(0.25)   # 4 polls per second
+        await asyncio.sleep(0.10)   # 10 polls per second
 
 
 async def _index_poller_loop():
@@ -630,6 +661,11 @@ async def _push_state_loop():
                 "rows": {
                     row_id: _serialize_state(s)
                     for row_id, s in states.items()
+                },
+                "global_settings": {
+                    "max_profit_limit": bot_engine.max_profit_limit,
+                    "max_loss_limit": bot_engine.max_loss_limit,
+                    "global_trading_halted": bot_engine.global_trading_halted,
                 },
                 "ltp_cache": ltp_cache,
                 "indices": index_cache,

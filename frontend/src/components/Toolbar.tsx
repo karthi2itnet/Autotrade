@@ -2,8 +2,9 @@
 import React, { useState } from "react";
 import { useDashboard } from "@/context/DashboardContext";
 import { Underlying, Expiry, BrokerName } from "@/lib/types";
-import { Play, Square, Zap, FlaskConical, RefreshCw } from "lucide-react";
+import { Play, Square, Zap, FlaskConical, RefreshCw, Save } from "lucide-react";
 import clsx from "clsx";
+import { api } from "@/lib/api";
 
 const underlyings: Underlying[] = ["NIFTY"];
 const expiries: Expiry[] = ["weekly", "monthly"];
@@ -13,12 +14,35 @@ const brokers: { id: BrokerName; label: string }[] = [
 ];
 
 export default function Toolbar() {
-    const { state, setUnderlying, setExpiry, setBroker, togglePaperMode, startAll, stopAll, killAll, loadStrikes, strikesLoaded } = useDashboard();
+    const { state, globalSettings, setUnderlying, setExpiry, setBroker, togglePaperMode, startAll, stopAll, killAll, loadStrikes, strikesLoaded } = useDashboard();
     const [loadingStrikes, setLoadingStrikes] = useState(false);
+
+    const [localMaxProfit, setLocalMaxProfit] = useState<string>("");
+    const [localMaxLoss, setLocalMaxLoss] = useState<string>("");
+
+    // Sync from server state
+    React.useEffect(() => {
+        if (globalSettings.max_profit_limit > 0) setLocalMaxProfit(globalSettings.max_profit_limit.toString());
+        if (globalSettings.max_loss_limit > 0) setLocalMaxLoss(globalSettings.max_loss_limit.toString());
+    }, [globalSettings.max_profit_limit, globalSettings.max_loss_limit]);
 
     const handleLoadStrikes = async () => {
         setLoadingStrikes(true);
         try { await loadStrikes(); } catch { } finally { setLoadingStrikes(false); }
+    };
+
+    const handleSaveGlobalLimits = async () => {
+        const payload = {
+            max_profit_limit: parseFloat(localMaxProfit) || 0,
+            max_loss_limit: parseFloat(localMaxLoss) || 0,
+            global_trading_halted: globalSettings.global_trading_halted,
+        };
+        try {
+            await api.setGlobalSettings(payload);
+            // Could add a small toast notification here
+        } catch (e) {
+            console.error("Failed to save global limits", e);
+        }
     };
 
 
@@ -99,6 +123,28 @@ export default function Toolbar() {
                 <RefreshCw size={13} style={{ animation: loadingStrikes ? "spin 1s linear infinite" : "none" }} />
                 {loadingStrikes ? "Loading…" : strikesLoaded ? "Reload Strikes" : "Load Strikes"}
             </button>
+
+            {/* Global Limits */}
+            <div style={{ display: "flex", alignItems: "center", gap: 6, background: "var(--bg-surface)", padding: "4px 8px", borderRadius: 8, border: "1px solid var(--border)" }}>
+                <span style={{ fontSize: 12, color: "var(--text-secondary)", fontWeight: 500 }}>Global PnL:</span>
+                <input
+                    type="number"
+                    placeholder="Max Profit"
+                    value={localMaxProfit}
+                    onChange={(e) => setLocalMaxProfit(e.target.value)}
+                    style={{ ...selectStyle, padding: "4px 8px", width: 80, borderColor: "rgba(0,230,118,0.3)" }}
+                />
+                <input
+                    type="number"
+                    placeholder="Max Loss"
+                    value={localMaxLoss}
+                    onChange={(e) => setLocalMaxLoss(e.target.value)}
+                    style={{ ...selectStyle, padding: "4px 8px", width: 80, borderColor: "rgba(255,61,87,0.3)" }}
+                />
+                <button title="Save Limits" onClick={handleSaveGlobalLimits} style={{ background: "transparent", border: "none", cursor: "pointer", color: "var(--accent-blue)", padding: 4 }}>
+                    <Save size={14} />
+                </button>
+            </div>
 
             <div style={{ flex: 1 }} />
 

@@ -149,6 +149,8 @@ async def _place_order_direct(
     instrument,       # pya3 Instrument namedtuple
     transaction_type: str,  # "BUY" or "SELL"
     quantity: int,
+    order_type: str = "MKT", # "MKT" or "LMT"
+    price: float = 0.0,
 ) -> dict:
     """
     Directly POST a market order to Alice Blue's REST API using the persistent
@@ -163,8 +165,8 @@ async def _place_order_direct(
         "discqty":        0,
         "exch":           instrument.exchange,
         "pCode":          "MIS",       # Intraday
-        "price":          0.0,         # Market order
-        "prctyp":         "MKT",
+        "price":          price if order_type == "LMT" else 0.0,
+        "prctyp":         "L" if order_type == "LMT" else "MKT",
         "qty":            quantity,
         "ret":            "DAY",
         "symbol_id":      str(instrument.token),
@@ -472,6 +474,8 @@ async def place_order(
     exchange: str,
     transaction_type: str,  # "BUY" | "SELL"
     quantity: int,
+    order_type: str = "MKT",
+    price: float = 0.0,
 ) -> str:
     """
     Place a market order.
@@ -522,7 +526,7 @@ async def place_order(
         raise RuntimeError(f"Instrument '{tradingsymbol}' not found in broker master: {emsg}")
 
     # Use direct async httpx call — avoids pya3's synchronous requests.post and per-call TLS handshake
-    resp = await _place_order_direct(inst, transaction_type, quantity)
+    resp = await _place_order_direct(inst, transaction_type, quantity, order_type=order_type, price=price)
 
     # Extract order number from response  
     if isinstance(resp, dict):
@@ -537,3 +541,17 @@ async def place_order(
                             return str(v[kk])
     return "ALICEBLUE-ORDER"
 
+async def cancel_order(order_id: str) -> bool:
+    """Cancel an open order."""
+    alice = get_client()
+    try:
+        # pya3: cancel_order(order_id)
+        result = await asyncio.to_thread(alice.cancel_order, order_id)
+        if isinstance(result, dict) and result.get("stat") == "Not_ok":
+            logger.warning("Alice Blue cancel order %s failed: %s", order_id, result.get("emsg", "error"))
+            return False
+        logger.info("Alice Blue order cancelled: %s", order_id)
+        return True
+    except Exception as e:
+        logger.error("Alice Blue cancel order %s failed: %s", order_id, e)
+        return False

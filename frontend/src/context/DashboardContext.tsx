@@ -3,7 +3,7 @@ import React, { createContext, useContext, useState, useCallback, useRef, useEff
 import {
     DashboardState, GridRowConfig, Underlying, Expiry, BrokerName, StrikeLabel
 } from "@/lib/types";
-import { useTradeWebSocket, WsRowState, WsBrokerTrade, WsBrokerOrder } from "@/hooks/useTradeWebSocket";
+import { useTradeWebSocket, WsRowState, WsBrokerTrade, WsBrokerOrder, WsGlobalSettings } from "@/hooks/useTradeWebSocket";
 import { api } from "@/lib/api";
 
 // ── Row ID helpers ─────────────────────────────────────────────────────────────
@@ -20,6 +20,8 @@ interface DashboardContextType {
     brokerTrades: WsBrokerTrade[];
     brokerOrders: WsBrokerOrder[];
     marketIndices: Record<string, number>;
+    globalSettings: WsGlobalSettings;
+    setGlobalSettings: (settings: WsGlobalSettings) => void;
     toolbarVisible: boolean;
     toggleToolbar: () => void;
     wsConnected: boolean;
@@ -58,6 +60,7 @@ export const DashboardProvider = ({ children }: { children: React.ReactNode }) =
     const [brokerTrades, setBrokerTrades] = useState<WsBrokerTrade[]>([]);
     const [brokerOrders, setBrokerOrders] = useState<WsBrokerOrder[]>([]);
     const [marketIndices, setMarketIndices] = useState<Record<string, number>>({ NIFTY: 0, BANKNIFTY: 0, SENSEX: 0, INDIAVIX: 0 });
+    const [globalSettings, setGlobalSettings] = useState<WsGlobalSettings>({ max_profit_limit: 0, max_loss_limit: 0, global_trading_halted: false });
     const [toolbarVisible, setToolbarVisible] = useState(false);
     const [wsConnected, setWsConnected] = useState(false);
     const [strikesLoaded, setStrikesLoaded] = useState(false);
@@ -88,6 +91,7 @@ export const DashboardProvider = ({ children }: { children: React.ReactNode }) =
                         ...row,
                         ltp: live.current_ltp > 0 ? live.current_ltp : row.ltp,
                         status: live.status as GridRowConfig["status"],
+                        reentryCount: live.reentry_count,
                     };
                 });
             return {
@@ -128,8 +132,13 @@ export const DashboardProvider = ({ children }: { children: React.ReactNode }) =
         setMarketIndices(prev => ({ ...prev, ...indices }));
     }, []);
 
+    const handleGlobalSettingsUpdate = useCallback((settings: WsGlobalSettings) => {
+        setGlobalSettings(settings);
+    }, []);
+
     useTradeWebSocket({
         onUpdate: handleWsUpdate,
+        onGlobalSettingsUpdate: handleGlobalSettingsUpdate,
         onLtpCacheUpdate: handleLtpCacheUpdate,
         onTradesUpdate: handleTradesUpdate,
         onOrdersUpdate: handleOrdersUpdate,
@@ -173,21 +182,29 @@ export const DashboardProvider = ({ children }: { children: React.ReactNode }) =
                 maxReentries: 2,
                 hedge: false,
                 hedgeSymbol,
+                autoSell: false,
                 status: "idle",
                 tradesCount: 0,
                 reentryCount: 0,
             });
 
-            // Build grids — we store the opposite-side symbol as hedge symbol
+            // Build grids — we store the opposite-side symbol as hedge symbol.
+            // Direct hedge means buying the SAME STRIKE on the opposite side.
+            // Backend returns:
+            // CE: OTM1 (+50), ATM (0), ITM1 (-50)
+            // PE: OTM1 (-50), ATM (0), ITM1 (+50)
             const ceGrid: GridRowConfig[] = STRIKE_LABELS.map(label => {
                 const info = data.ce[label] ?? { strike: 0, ltp: 0, symbol: "" };
-                // Hedge for a CE buy = buy PE at the same strike (ATM/near)
-                const hedgeInfo = data.pe[label] ?? { symbol: "" };
+                // Find PE with same strike
+                const hedgeLabel = label === "OTM1" ? "ITM1" : label === "ITM1" ? "OTM1" : "ATM";
+                const hedgeInfo = data.pe[hedgeLabel] ?? { symbol: "" };
                 return makeRow(label, info.strike, info.ltp, info.symbol, hedgeInfo.symbol);
             });
             const peGrid: GridRowConfig[] = STRIKE_LABELS.map(label => {
                 const info = data.pe[label] ?? { strike: 0, ltp: 0, symbol: "" };
-                const hedgeInfo = data.ce[label] ?? { symbol: "" };
+                // Find CE with same strike
+                const hedgeLabel = label === "OTM1" ? "ITM1" : label === "ITM1" ? "OTM1" : "ATM";
+                const hedgeInfo = data.ce[hedgeLabel] ?? { symbol: "" };
                 return makeRow(label, info.strike, info.ltp, info.symbol, hedgeInfo.symbol);
             });
 
@@ -269,6 +286,7 @@ export const DashboardProvider = ({ children }: { children: React.ReactNode }) =
             max_reentries: row.maxReentries,
             hedge: row.hedge,
             hedge_symbol: row.hedgeSymbol ?? "",
+            auto_sell: row.autoSell ?? false,
             broker: s.broker,
             paper_mode: s.paperMode,
         }).then(result => {
@@ -291,6 +309,7 @@ export const DashboardProvider = ({ children }: { children: React.ReactNode }) =
     return (
         <DashboardContext.Provider value={{
             state, liveData, brokerTrades, brokerOrders, marketIndices,
+            globalSettings, setGlobalSettings,
             toolbarVisible, toggleToolbar,
             wsConnected, strikesLoaded,
             updateCeRow, updatePeRow,

@@ -160,6 +160,7 @@ export default function TradingGrid({ side, rows, liveData, onUpdateRow, onStart
                             <th style={hStyle}>Profit Pts</th>
                             <th style={hStyle}>Max Re-entries</th>
                             <th style={hStyle}>Hedge</th>
+                            <th style={hStyle}>Auto Sell</th>
                             <th style={hStyle}>Open Lots</th>
                             <th style={hStyle}>Status</th>
                             <th style={hStyle}>Action</th>
@@ -237,6 +238,19 @@ export default function TradingGrid({ side, rows, liveData, onUpdateRow, onStart
                                             </div>
                                         </td>
 
+                                        {/* Auto Sell */}
+                                        <td style={cStyle}>
+                                            <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 2 }}>
+                                                <input type="checkbox" checked={row.autoSell} style={{ width: 14, height: 14, cursor: "pointer" }}
+                                                    onChange={e => onUpdateRow(i, { autoSell: e.target.checked })} />
+                                                {row.autoSell && (
+                                                    <span style={{ fontSize: 9, color: "var(--accent-green)", fontWeight: 600 }}>
+                                                        Limit
+                                                    </span>
+                                                )}
+                                            </div>
+                                        </td>
+
                                         {/* Open Lots badge */}
                                         <td style={cStyle}>
                                             <button onClick={() => live && toggle(row.strikeLabel)} disabled={!live || openCount === 0}
@@ -294,7 +308,7 @@ export default function TradingGrid({ side, rows, liveData, onUpdateRow, onStart
                                     {/* Open lots expandable panel */}
                                     {isExpanded && live && live.open_lots.length > 0 && (
                                         <tr key={`${row.strikeLabel}-lots`}>
-                                            <td colSpan={10} style={{ padding: 0 }}>
+                                            <td colSpan={11} style={{ padding: 0 }}>
                                                 <OpenLotsPanel live={live} side={side} />
                                             </td>
                                         </tr>

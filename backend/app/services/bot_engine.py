@@ -48,6 +48,7 @@ class OpenLot:
     target_ltp: float       # entry_ltp + profit_pts
     order_id: str
     hedge_order_id: str = ""
+    sell_order_id: str = "" # populated if auto-sell is used
 
 
 @dataclass
@@ -67,6 +68,7 @@ class BotRowConfig:
     hedge_symbol: str = ""  # opposite-side symbol
     broker: str = "aliceblue"
     paper_mode: bool = True
+    auto_sell: bool = False # place target limit sell order immediately after buy
 
 
 @dataclass
@@ -78,6 +80,7 @@ class BotRowState:
     lots_closed_today: int = 0
     total_points_today: float = 0.0
     total_pnl_today: float = 0.0
+    current_reentries: int = 0  # Re-entries in the CURRENT trade cycle
     trade_log: list = field(default_factory=list)
 
     # ── Derived helpers ──────────────────────────────────────────────────────
@@ -105,6 +108,12 @@ class BotEngine:
     def __init__(self):
         self._rows:  dict[str, BotRowState] = {}
         self._tasks: dict[str, asyncio.Task] = {}
+        
+        # Global limits
+        self.max_profit_limit: float = 0.0  # 0.0 means unlimited
+        self.max_loss_limit: float = 0.0    # 0.0 means unlimited
+        self.global_trading_halted: bool = False
+
 
     def add_row(self, row_id: str, config: BotRowConfig):
         self._rows[row_id] = BotRowState(config=config)
@@ -142,10 +151,41 @@ class BotEngine:
         state = self._rows.get(row_id)
         if state:
             state.status = BotStatus.STOPPED
+            if state.open_lots:
+                asyncio.create_task(self._close_all_lots_on_stop(row_id, state))
+                
         task = self._tasks.get(row_id)
         if task and not task.done():
             task.cancel()
         logger.info("⏹ Stopped row %s", row_id)
+
+    async def _close_all_lots_on_stop(self, row_id: str, state: BotRowState):
+        """Immediately market sell all open lots when user stops the bot."""
+        try:
+            exit_ltp = await self._fetch_ltp(state.config)
+            logger.info("[%s] Stopping... closing %d open lots at ₹%.1f", row_id, len(state.open_lots), exit_ltp)
+            
+            for lot in list(state.open_lots):
+                if lot.sell_order_id:
+                    # Cancel the open limit order on broker
+                    await self._cancel_order(state.config, lot.sell_order_id)
+                    lot.sell_order_id = "" # Force market sell in _close_lot
+                await self._close_lot(state, lot, exit_ltp, "manual")
+                
+            state.open_lots.clear()
+            logger.info("[%s] All open lots closed due to stop.", row_id)
+        except Exception as e:
+            logger.error("[%s] Error closing lots on stop: %s", row_id, e, exc_info=True)
+
+    async def _cancel_order(self, cfg: BotRowConfig, order_id: str) -> bool:
+        """Helper to cancel an active limit order."""
+        if cfg.paper_mode or not order_id:
+            return True
+        if cfg.broker == "aliceblue":
+            from app.brokers import aliceblue
+            return await aliceblue.cancel_order(order_id)
+        from app.brokers import zerodha
+        return await zerodha.cancel_order(order_id)
 
     async def stop_all(self):
         for row_id in list(self._tasks):
@@ -172,7 +212,7 @@ class BotEngine:
 
                 # ── Phase A: No open lots → enter first lot ────────────────
                 if not state.open_lots:
-                    if state.status == BotStatus.RUNNING:
+                    if state.status == BotStatus.RUNNING and not self.global_trading_halted:
                         lot = await self._open_lot(state, ltp)
                         logger.info("[%s] Lot-1 BUY @ ₹%.1f  target ₹%.1f",
                                     row_id, ltp, lot.target_ltp)
@@ -195,18 +235,29 @@ class BotEngine:
                     # B2: After exits, if all closed → back to RUNNING (watching)
                     if not state.open_lots:
                         state.status = BotStatus.RUNNING
+                        state.current_reentries = 0 # RESET re-entry count for fresh cycle
                         logger.info("[%s] All lots closed. Watching for re-entry.", row_id)
 
                     # B3: Averaging down — add lot if price dropped enough
-                    elif state.open_lot_count < state.max_lots_total:
+                    elif state.current_reentries < cfg.max_reentries:
                         last = state.last_lot
                         reentry_trigger = last.entry_ltp - cfg.avg_reentry_pts
                         if ltp <= reentry_trigger:
-                            lot = await self._open_lot(state, ltp)
-                            logger.info("[%s] Lot-%d ADD (avg-down) @ ₹%.1f  trigger ₹%.1f",
-                                        row_id, lot.lot_number, ltp, reentry_trigger)
+                            # Use strict cycle-based limit check
+                            if state.current_reentries < cfg.max_reentries:
+                                lot = await self._open_lot(state, ltp)
+                                logger.info("[%s] Lot-%d ADD (avg-down) @ ₹%.1f  trigger ₹%.1f [Cycle Limit %d/%d]",
+                                            row_id, lot.lot_number, ltp, reentry_trigger, 
+                                            state.current_reentries, cfg.max_reentries)
+                            else:
+                                logger.debug("[%s] Re-entry limit reached (%d/%d), skipping trigger.", 
+                                             row_id, state.current_reentries, cfg.max_reentries)
 
-                await asyncio.sleep(0.1)  # Faster reaction to UI signals and price ticks
+                    # B4: Active Stoploss Check (M2M)
+                    # Check global limits even if no specific event occurred
+                    self._check_global_pnl_limits()
+
+                await asyncio.sleep(0.02)  # Faster reaction to UI signals and price ticks
 
         except asyncio.CancelledError:
             logger.info("[%s] Cancelled", row_id)
@@ -237,13 +288,25 @@ class BotEngine:
         
         logger.info("  ↳ _open_lot broker API call completed in %.1f ms", (time.time() - t0) * 1000)
 
+        target_ltp = round(ltp + cfg.profit_pts, 2)
+        sell_order_id = ""
+
+        # Place Auto Sell Limit order if enabled
+        if cfg.auto_sell:
+            sell_order_id = await self._place_sell(cfg, "", is_limit=True, limit_price=target_ltp)
+            logger.info("  ↳ _open_lot immediately placed limit sell obj %s @ ₹%.1f", sell_order_id, target_ltp)
+
         lot = OpenLot(
             lot_number=lot_number,
             entry_ltp=ltp,
-            target_ltp=round(ltp + cfg.profit_pts, 2),
+            target_ltp=target_ltp,
             order_id=order_id,
             hedge_order_id=hedge_order_id,
+            sell_order_id=sell_order_id,
         )
+        if lot_number > 1:
+            state.current_reentries += 1
+            
         state.open_lots.append(lot)
         return lot
 
@@ -251,10 +314,16 @@ class BotEngine:
         """Sell 1 lot (+ hedge if applicable). Log the trade."""
         cfg = state.config
         
-        coros = [self._place_sell(cfg, lot.order_id)]
+        coros = []
+        if not lot.sell_order_id:
+            # If we haven't auto-placed a limit sell, do a market sell now
+            coros.append(self._place_sell(cfg, lot.order_id))
+            
         if lot.hedge_order_id:
             coros.append(self._place_sell(cfg, lot.hedge_order_id, hedge=True))
-        await asyncio.gather(*coros)
+            
+        if coros:
+            await asyncio.gather(*coros)
 
         points = round(exit_ltp - lot.entry_ltp, 2)
         pnl    = round(points * cfg.lots * cfg.lot_size, 2)
@@ -284,6 +353,59 @@ class BotEngine:
         asyncio.create_task(self._persist_trade(cfg, trade))
         from app.services.notifier import send_trade_alert
         asyncio.create_task(send_trade_alert(trade))
+
+        # Check Global PnL Limits
+        self._check_global_pnl_limits()
+
+    async def _check_global_pnl_limits_async(self):
+        """
+        Calculates total Realized + Unrealized P&L (MTM).
+        If loss limit hit, calls kill_all().
+        """
+        if self.global_trading_halted:
+            return
+
+        total_realized = sum(r.total_pnl_today for r in self._rows.values())
+        total_unrealized = 0.0
+        
+        for state in self._rows.values():
+            if state.status == BotStatus.IN_TRADE:
+                for lot in state.open_lots:
+                    # Point difference
+                    pts = state.current_ltp - lot.entry_ltp
+                    # PnL for this lot
+                    lot_pnl = pts * state.config.lots * state.config.lot_size
+                    total_unrealized += lot_pnl
+        
+        total_mtm = round(total_realized + total_unrealized, 2)
+        
+        max_profit = self.max_profit_limit
+        max_loss = self.max_loss_limit
+        
+        halted = False
+        reason = ""
+
+        if max_profit > 0.0 and total_mtm >= max_profit:
+            halted = True
+            reason = f"MAX PROFIT REACHED (+₹{total_mtm:.1f} MTM)"
+        elif max_loss > 0.0 and total_mtm <= -max_loss:
+            halted = True
+            reason = f"MAX LOSS REACHED (₹{total_mtm:.1f} MTM)"
+
+        if halted:
+            self.global_trading_halted = True
+            logger.warning("🚨 GLOBAL TRADING HALTED! %s", reason)
+            
+            # IMMEDIATELY Kill All positions
+            asyncio.create_task(self.kill_all())
+            
+            from app.services.notifier import send_error_alert
+            asyncio.create_task(send_error_alert("GLOBAL_LIMIT", f"Trading Halted: {reason}. All positions closed."))
+
+    def _check_global_pnl_limits(self):
+        """Sync wrapper to fire off the async check."""
+        asyncio.create_task(self._check_global_pnl_limits_async())
+
 
     # ── Broker helpers ─────────────────────────────────────────────────────────
 
@@ -329,18 +451,22 @@ class BotEngine:
         from app.brokers import zerodha
         return await zerodha.place_order(cfg.symbol, "NFO", "BUY", qty)
 
-    async def _place_sell(self, cfg: BotRowConfig, order_id: str, hedge: bool = False) -> str:
+    async def _place_sell(self, cfg: BotRowConfig, order_id: str, hedge: bool = False, is_limit: bool = False, limit_price: float = 0.0) -> str:
         qty = cfg.lots * cfg.lot_size
         symbol = cfg.hedge_symbol if hedge else cfg.symbol
+        order_type = "LMT" if is_limit else "MKT"
+        
         if cfg.paper_mode:
             oid = f"PAPER-SELL-{uuid.uuid4().hex[:8]}"
-            logger.info("[PAPER] SELL %s x%d → %s", symbol, qty, oid)
+            logger.info("[PAPER] SELL %s x%d @ %s → %s", symbol, qty, limit_price if is_limit else "MKT", oid)
             return oid
+            
         if cfg.broker == "aliceblue":
             from app.brokers import aliceblue
-            return await aliceblue.place_order(symbol, "NFO", "SELL", qty)
+            return await aliceblue.place_order(symbol, "NFO", "SELL", qty, order_type=order_type, price=limit_price)
+            
         from app.brokers import zerodha
-        return await zerodha.place_order(symbol, "NFO", "SELL", qty)
+        return await zerodha.place_order(symbol, "NFO", "SELL", qty)  # zero-dha not fully supporting limit parameters in placeholder yet
 
     async def _place_hedge_buy(self, cfg: BotRowConfig) -> str:
         qty = cfg.lots * cfg.lot_size
